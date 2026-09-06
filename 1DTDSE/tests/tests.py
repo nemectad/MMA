@@ -3,6 +3,13 @@ import numpy as np
 from PythonTDSE import *
 import argparse
 import sys
+import multiprocessing
+import pickle
+import logging
+
+def configure_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="[%(levelname)s] %(message)s")
 
 class TestTDSE(unittest.TestCase):
     ### test inputs
@@ -33,7 +40,7 @@ class TestTDSE(unittest.TestCase):
         Efield = E_0*sin_2(t)*np.cos(omega_0*t)
 
         ### Init variables
-        cls.inputs.init_time_and_field(cls.DLL, t = t, E = Efield)
+        cls.inputs.init_time_and_field(t = t, E = Efield)
         ### Set writing true
         cls.inputs.analy.writewft = c_int(1)
         ### Set wavefunction writing each 10 au in time
@@ -96,17 +103,118 @@ class TestTDSE(unittest.TestCase):
         wavefunction = output.get_wavefunction(inputs, grids = False)
         self.assertTrue(np.allclose(wavefunction, self.wavefunction))
 
+    def test_delete(self):
+        output = outputs_def()
+
+        i, o = self.DLL.call1DTDSE(self.inputs, output)
+
+        self.assertTrue(all([i == self.inputs, o == output]))
+
+        self.assertFalse(output._python_owned)
+
+        try:
+            del output
+            assert True
+        except:
+            assert False
+
+    def test_list_comprehension(self):
+        N = 2
+
+        inputs = inputs_def()
+        inputs.init_default_inputs(trg_a=1., CV = 1e-15, num_r=8000)
+        ### Field amplitude
+        E_0 = 0.14
+        ### Fundamental frequency
+        omega_0 = 0.07
+        ### Number of cycles
+        Nc = 4
+        ### Period
+        T = 2*np.pi/omega_0
+        ### Pulse length
+        T_max = Nc*T
+        ### Number of time points
+        N_t = int(T_max/inputs.dt) + 1
+        ### Temporal grid
+        t = np.linspace(0, T_max, N_t)
+        ### Sine squared envelope
+        sin_2 = lambda t: np.sin(np.pi*t/T_max)**2
+
+        ### Field
+        Efield = E_0*sin_2(t)*np.cos(omega_0*t)
+
+        ### Init variables
+        inputs = [inputs_def() for i in range(N)]
+        for input in inputs:
+            input.init_default_inputs(trg_a=1., CV = 1e-15, num_r=8000)
+            input.init_time_and_field(t = t, E = Efield)
+            self.DLL.init_GS(input)
+
+        outputs = [outputs_def() for i in range(N)]
+
+        _ = [self.DLL.call1DTDSE(input, output) for (input, output) in zip(inputs, outputs)]
+
+    def test_pickling(self):
+        # Pickle and unpickle self.inputs
+        pkl_inputs = pickle.loads(pickle.dumps(self.inputs))
+        self.assertTrue(pkl_inputs._python_owned)
+        self.assertTrue(np.allclose(pkl_inputs.get_xgrid(), self.inputs.get_xgrid()))
+        self.assertTrue(np.allclose(pkl_inputs.get_GS(), self.inputs.get_GS()))
+        self.assertTrue(np.allclose(pkl_inputs.get_tgrid(), self.inputs.get_tgrid()))
+        self.assertTrue(np.allclose(pkl_inputs.get_Efield(), self.inputs.get_Efield()))
+
+        # Pickle and unpickle self.output
+        pkl_output = pickle.loads(pickle.dumps(self.output))
+        self.assertTrue(pkl_output._python_owned)
+        self.assertTrue(np.allclose(pkl_output.get_tgrid(), self.output.get_tgrid()))
+        self.assertTrue(np.allclose(pkl_output.get_Efield(), self.output.get_Efield()))
+        self.assertTrue(np.allclose(pkl_output.get_sourceterm(), self.output.get_sourceterm()))
+        self.assertTrue(np.allclose(pkl_output.get_PopTot(), self.output.get_PopTot()))
+        self.assertTrue(np.allclose(pkl_output.get_PopInt(), self.output.get_PopInt()))
+
+    def test_multicore_TDSE(self):
+        N = 2
+
+        pool = multiprocessing.Pool(N)
+        outputs = [outputs_def() for i in range(N)]
+        res = pool.starmap_async(
+            self.DLL.call1DTDSE,
+            [(self.inputs, o) for o in outputs],
+            error_callback=self.callback
+        )
+
+        pool.close()
+        pool.join()
+
+        for r in res.get():
+            for s in r:
+                self.assertTrue(s._python_owned)
+
+        assert res.successful()
+
+    @staticmethod
+    def callback(e):
+        print(e)
+        return
+
     @classmethod
     def tearDownClass(cls):
         pass
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument("-d", "--dll", required=True, help="Path do the C-TDSE DLL.")
+    ap.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="Enable debug logging output"
+    )
+    ap.add_argument("-l", "--dll", required=True, help="Path do the C-TDSE DLL.")
     ap.add_argument('unittest_args', nargs='*')
     args = vars(ap.parse_args())
 
-    DLL_path = args['dll']
+    configure_logging(args["debug"])
+
+    DLL_path = args["dll"]
 
     args = ap.parse_args()
     sys.argv[1:] = args.unittest_args

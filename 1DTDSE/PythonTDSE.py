@@ -13,6 +13,9 @@ from PythonCTDSE.plotting import *
 from PythonCTDSE.structures import *
 from typing import Any
 import numpy as np
+import inspect
+import functools
+import os
 
 class TDSE_DLL:
     """
@@ -43,8 +46,18 @@ class TDSE_DLL:
             Path to the dynamic library.
         """
         self.DLL = CDLL(path_to_DLL)
+        self._DLL_path = path_to_DLL
         # Set DLL into global scope
         set_dll(self)
+
+    def __getstate__(self):
+        return {
+            "_DLL_path": self._DLL_path
+        }
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.DLL = CDLL(self._DLL_path)
 
     def init_GS(self, inputs):
         """
@@ -54,6 +67,10 @@ class TDSE_DLL:
         -----------
         inputs: inputs_def
             Input structure
+
+        Returns:
+        --------
+        inputs_def: Modified input structure
         """
         if inputs._python_owned:
             raise ValueError(
@@ -62,11 +79,21 @@ class TDSE_DLL:
                 "routines. "
             )
 
+        if any([inputs.x, inputs.psi0]):
+            raise ValueError(
+                "Initialized input structure with x-grid and ground state "
+                "cannot be reused for GS computation. "
+            )
+
         ### Find ground state and init grids
         init_grid = self.DLL.Initialise_grid_and_ground_state
         init_grid.restype = None
         init_grid.argtypes = [POINTER(inputs_def)]
         init_grid(inputs.ptr)
+
+        inputs._python_owned = False
+
+        return inputs
 
     def call1DTDSE(self, inputs, outputs):
         """
@@ -78,12 +105,19 @@ class TDSE_DLL:
             Ctypes inputs structure
         outputs:
             Ctypes outputs structure
+
+        Returns:
+        --------
+        (inputs_def, outputs_def): Modified input and ouput structures
         """
         ### Do the propagation
         TDSE = self.DLL.call1DTDSE
         TDSE.restype = None
         TDSE.argtypes = [POINTER(inputs_def), POINTER(outputs_def)]
+
         TDSE(inputs.ptr, outputs.ptr)
+
+        outputs._python_owned = False
 
         outputs._has_wavefunction = inputs.analy.writewft == 1
 
@@ -92,6 +126,9 @@ class TDSE_DLL:
             size = int(outputs.Nt/steps_per_dt)
 
             outputs._len_wavefunction = size
+            outputs._psi_col_size = 2 * (inputs.num_r + 1)
+
+        return (inputs, outputs)
 
     def compute_PES(self, inputs, psi, E_start = -0.6, num_E = 10000, epsilon = 5e-4, Estep = 5e-4):
         """
