@@ -6,20 +6,21 @@ This module contains the C-compatible structures definitions for the Python-C bi
 """
 
 
-from PythonCTDSE.ctypes_helper import *
 from typing import Any
 import h5py
 from PythonCTDSE.constants import *
+from PythonCTDSE.errors import InitializedStructureError, NotInitializedError
+from PythonCTDSE.ctypes_helper import *
 import MMA_administration as MMA
 import functools
 import warnings
 import enum
 import logging
+from ctypes import *
 
 from version import _version
 major, minor, patch = _version
 
-# Set DLL into global scope - TODO: make into a singleton
 _DLL = None
 
 def set_dll(dll):
@@ -30,9 +31,6 @@ def set_dll(dll):
 class Precision(enum.Enum):
     DOUBLE = b"d"
     SINGLE = b"s"
-
-class NotInitializedError(RuntimeError):
-    pass
 
 def delete_wrapper(func):
     @functools.wraps(func)
@@ -266,10 +264,8 @@ class inputs_def(Structure):
         super().__init__(*args, **kw)
 
         if not _DLL:
-            raise NotInitializedError(
-                "Python TDSE DLL has not been initialized yet! "
-                "Create an instance of TDSE_DLL class first."
-            )
+            raise NotInitializedError
+
         self._freed = False
         self._python_owned = False
         self._DLL = _DLL
@@ -510,7 +506,7 @@ class inputs_def(Structure):
             Time array.
         """
         if self._python_owned or self.Efield.Field:
-            raise ValueError("Cannot re-initialize already set up fields. ")
+            raise InitializedStructureError
 
         if (filename != "") and (E is None or t is None):
             f = h5py.File(filename, "r")
@@ -696,10 +692,7 @@ class outputs_def(Structure):
         super().__init__(*args, **kw)
 
         if not _DLL:
-            raise NotInitializedError(
-                "Python TDSE DLL has not been initialized yet! "
-                "Create an instance of TDSE_DLL class first."
-            )
+            raise NotInitializedError
 
         self._freed = False
         self._python_owned = False

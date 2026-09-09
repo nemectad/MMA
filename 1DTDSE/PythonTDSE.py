@@ -11,11 +11,10 @@ from PythonCTDSE.constants import *
 from PythonCTDSE.ctypes_helper import *
 from PythonCTDSE.plotting import *
 from PythonCTDSE.structures import *
-from typing import Any
+from PythonCTDSE.errors import *
+from typing import Tuple
 import numpy as np
-import inspect
 import functools
-import os
 
 class TDSE_DLL:
     """
@@ -59,7 +58,7 @@ class TDSE_DLL:
         self.__dict__.update(state)
         self.DLL = CDLL(self._DLL_path)
 
-    def init_GS(self, inputs):
+    def init_GS(self, inputs: inputs_def) -> inputs_def:
         """
         Initialization of the ground state.
 
@@ -73,17 +72,10 @@ class TDSE_DLL:
         inputs_def: Modified input structure
         """
         if inputs._python_owned:
-            raise ValueError(
-                "Input structure with initialized fields from Python cannot "
-                "be used for GS computation! Do not use loaded inputs for C "
-                "routines. "
-            )
+            raise PythonOwnedError
 
         if any([inputs.x, inputs.psi0]):
-            raise ValueError(
-                "Initialized input structure with x-grid and ground state "
-                "cannot be reused for GS computation. "
-            )
+            raise InitializedStructureError
 
         ### Find ground state and init grids
         init_grid = self.DLL.Initialise_grid_and_ground_state
@@ -95,7 +87,7 @@ class TDSE_DLL:
 
         return inputs
 
-    def call1DTDSE(self, inputs, outputs):
+    def call1DTDSE(self, inputs: inputs_def, outputs: outputs_def) -> Tuple[inputs_def, outputs_def]:
         """
         Propagates the ground state according the field.
 
@@ -115,6 +107,9 @@ class TDSE_DLL:
         TDSE.restype = None
         TDSE.argtypes = [POINTER(inputs_def), POINTER(outputs_def)]
 
+        if any([outputs.Fsourceterm, outputs.expval]):
+            raise InitializedStructureError
+
         TDSE(inputs.ptr, outputs.ptr)
 
         outputs._python_owned = False
@@ -130,7 +125,7 @@ class TDSE_DLL:
 
         return (inputs, outputs)
 
-    def compute_PES(self, inputs, psi, E_start = -0.6, num_E = 10000, epsilon = 5e-4, Estep = 5e-4):
+    def compute_PES(self, inputs, psi, E_start = -0.6, num_E = 10000, epsilon = 5e-4, Estep = 5e-4) -> Tuple[np.ndarray]:
         """
         Computes photoelectron spectrum (PES) from a wavefunction.
 
@@ -162,7 +157,7 @@ class TDSE_DLL:
         self.free_arr(res)
         return E_grid, res_np
 
-    def gabor_transform(self, signal, dt, N, omega_max, t_min, t_max, N_G, a = 8.):
+    def gabor_transform(self, signal, dt, N, omega_max, t_min, t_max, N_G, a = 8.) -> Tuple[np.ndarray]:
         """
         Computes fast Gabor transform of a signal.
 
@@ -199,7 +194,7 @@ class TDSE_DLL:
         self.free_mtrx(byref(res), N_G)
         return np.linspace(t_min, t_max, N_G), omegas[omega_range], np.transpose(gabor_res)
 
-    def free_mtrx(self, buffer_ptr, N_rows):
+    def free_mtrx(self, buffer_ptr, N_rows) -> None:
         """
         Frees 2-D C array.
 
@@ -214,7 +209,7 @@ class TDSE_DLL:
         self.DLL.free_mtrx.argtypes = [POINTER(POINTER(POINTER(c_double))), c_int]
         self.DLL.free_mtrx(buffer_ptr, c_int(N_rows))
 
-    def free_arr(self, buffer_ptr):
+    def free_arr(self, buffer_ptr) -> None:
         """
         Frees 1-D C array.
 
@@ -227,7 +222,7 @@ class TDSE_DLL:
         self.DLL.free_arr.argtypes = [POINTER(POINTER(c_double))]
         self.DLL.free_arr(buffer_ptr)
 
-    def free_outputs(self, out_ptr):
+    def free_outputs(self, out_ptr) -> None:
         """
         Frees outputs structure.
 
@@ -240,7 +235,7 @@ class TDSE_DLL:
         self.DLL.outputs_destructor.argtypes = [POINTER(outputs_def)]
         self.DLL.outputs_destructor(out_ptr)
 
-    def free_inputs(self, in_ptr):
+    def free_inputs(self, in_ptr) -> None:
         """
         Frees inputs structure.
 
@@ -253,7 +248,7 @@ class TDSE_DLL:
         self.DLL.inputs_destructor.argtypes = [POINTER(inputs_def)]
         self.DLL.inputs_destructor(in_ptr)
 
-    def set_time_and_field(self, in_ptr, time, field, N):
+    def set_time_and_field(self, in_ptr, time, field, N) -> None:
         """
         Sets time and fields from Numpy arrays using C allocation.
 

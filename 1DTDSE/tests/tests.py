@@ -13,31 +13,40 @@ def configure_logging(verbose: bool) -> None:
 
 class TestTDSE(unittest.TestCase):
     ### test inputs
+    @staticmethod
+    def set_time_and_field() -> Tuple[np.ndarray]:
+        # Field amplitude
+        E_0 = 0.14
+        # Fundamental frequency
+        omega_0 = 0.07
+        # Number of cycles
+        Nc = 4
+        # Period
+        T = 2*np.pi/omega_0
+        # Pulse length
+        T_max = Nc*T
+        # Timestep
+        dt = 0.25
+        # Number of time points
+        N_t = int(T_max/dt) + 1
+        # Temporal grid
+        t = np.linspace(0, T_max, N_t)
+        # Sine squared envelope
+        sin_2 = lambda t: np.sin(np.pi*t/T_max)**2
+
+        # Field
+        Efield = E_0*sin_2(t)*np.cos(omega_0*t)
+
+        return t, Efield
+
     @classmethod
     def setUpClass(cls):
         cls.DLL = TDSE_DLL(DLL_path)
 
         cls.inputs = inputs_def()
         cls.inputs.init_default_inputs(trg_a=1., CV = 1e-15, num_r=8000)
-        ### Field amplitude
-        E_0 = 0.14
-        ### Fundamental frequency
-        omega_0 = 0.07
-        ### Number of cycles
-        Nc = 4
-        ### Period
-        T = 2*np.pi/omega_0
-        ### Pulse length
-        T_max = Nc*T
-        ### Number of time points
-        N_t = int(T_max/cls.inputs.dt) + 1
-        ### Temporal grid
-        t = np.linspace(0, T_max, N_t)
-        ### Sine squared envelope
-        sin_2 = lambda t: np.sin(np.pi*t/T_max)**2
 
-        ### Field
-        Efield = E_0*sin_2(t)*np.cos(omega_0*t)
+        t, Efield = cls.set_time_and_field()
 
         ### Init variables
         cls.inputs.init_time_and_field(t = t, E = Efield)
@@ -123,25 +132,8 @@ class TestTDSE(unittest.TestCase):
 
         inputs = inputs_def()
         inputs.init_default_inputs(trg_a=1., CV = 1e-15, num_r=8000)
-        ### Field amplitude
-        E_0 = 0.14
-        ### Fundamental frequency
-        omega_0 = 0.07
-        ### Number of cycles
-        Nc = 4
-        ### Period
-        T = 2*np.pi/omega_0
-        ### Pulse length
-        T_max = Nc*T
-        ### Number of time points
-        N_t = int(T_max/inputs.dt) + 1
-        ### Temporal grid
-        t = np.linspace(0, T_max, N_t)
-        ### Sine squared envelope
-        sin_2 = lambda t: np.sin(np.pi*t/T_max)**2
 
-        ### Field
-        Efield = E_0*sin_2(t)*np.cos(omega_0*t)
+        t, Efield = self.set_time_and_field()
 
         ### Init variables
         inputs = [inputs_def() for i in range(N)]
@@ -191,6 +183,35 @@ class TestTDSE(unittest.TestCase):
                 self.assertTrue(s._python_owned)
 
         assert res.successful()
+
+    def test_python_errors(self):
+        inputs = inputs_def()
+        inputs.init_default_inputs(trg_a=1., CV = 1e-15, num_r=8000)
+
+        inputs = self.DLL.init_GS(inputs)
+
+        with self.assertRaises(InitializedStructureError):
+            self.DLL.init_GS(inputs)
+
+        inputs._python_owned = True
+
+        with self.assertRaises(PythonOwnedError):
+            self.DLL.init_GS(inputs)
+
+        inputs._python_owned = False
+
+        t, Efield = self.set_time_and_field()
+
+        # Init variables
+        inputs.init_time_and_field(t = t, E = Efield)
+
+        with self.assertRaises(InitializedStructureError):
+            inputs.init_time_and_field(t = t, E = Efield)
+
+        inputs, outputs = self.DLL.call1DTDSE(inputs, outputs_def())
+
+        with self.assertRaises(InitializedStructureError):
+            inputs, outputs = self.DLL.call1DTDSE(inputs, outputs)
 
     @staticmethod
     def callback(e):
